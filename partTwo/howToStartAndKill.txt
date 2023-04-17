@@ -1,0 +1,7 @@
+start:
+
+./Loudr.sh & disown
+
+end (badly):
+
+killall -9 bash
