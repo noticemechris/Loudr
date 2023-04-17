@@ -1,3 +1,0 @@
-🚨❗URGENT: YOUR WSPR TRANSMITTER MAY BE DOWN. TIME SINCE LAST SUCCESSFUL UPLOAD TO SERVER: $hoursSinceLastPing HOURS $minutesSinceLastPing MINUTES. ❗🚨
-
-You will be notified if an upload is detected again.
