@@ -1,2 +1,0 @@
-🥳Horray!🥳 Your WSPR transmitter is successfully sending and/or receiving again.
-No further action items required.
