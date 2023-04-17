@@ -1,5 +1,5 @@
 #sets the maximum acceptable time threshold between pings in seconds. Set much lower when doing demonstrations
-maxPingTimeDiff=7320
+maxPingTimeDiff=300
 
 #in the event of an outage, sets the time interval that it will re-ping the website and see if new data was uploaded. In this case, I'm setting it to 2 mins since each data transmission takes 2 minutes
 timeUntilOutageRePing=120
