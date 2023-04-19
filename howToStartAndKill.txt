@@ -1,7 +1,8 @@
 start:
 
-./Loudr.sh & disown
+python3 Loudr.py &
 
-end (badly):
+end (less badly):
 
-killall -9 bash
+ps aux | grep my_script.py
+kill [PID]
