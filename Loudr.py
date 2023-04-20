@@ -30,7 +30,7 @@ outageNotifPath = config.get("notifs", "outageNotifPath")
 reconnectNotifPath = config.get("notifs", "reconnectNotifPath")
 
 #web scraping info, to be updated when adding support for other transceivers, etc
-URL = "https://www.wsprnet.org/olddb?mode=html&band=40&limit=1&findcall=w8edu&findreporter=&sort=date"
+URL = "https://www.wsprnet.org/olddb?mode=html&band=40&limit=1&findcall=w8edu&findreporter=w8edu&sort=date"
 lineNumberToKeep = 122
 
 #secret stuff
