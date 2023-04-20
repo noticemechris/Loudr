@@ -8,15 +8,15 @@ import http.client
 import urllib
 
 # Configurations, to bereplaces as conf file
-maxPingTimeDiff = 300
+maxPingTimeDiff = 241
 timeUntilOutageRePing = 120
 URL = "https://www.wsprnet.org/olddb?mode=html&band=40&limit=1&findcall=w8edu&findreporter=&sort=date"
 lineNumberToKeep = 122
 scrapedFile = "scraped.txt"
 rawHtmlFile = "raw.html"
 logFile = "log.log"
-token = "a7f3d5m83zqsd318t3sak5x2udb428"
-user = "uthw8zjwymiryizeazdgv9ohaifs44"
+token = os.environ["pushoverApiKey"]
+user = os.environ["pushoverUser"]
 
 #import messages as strings
 with open("outageMessage.txt", "r") as f:
