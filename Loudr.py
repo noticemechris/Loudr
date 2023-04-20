@@ -6,29 +6,48 @@ from datetime import datetime
 import logging
 import http.client
 import urllib
+import configparser
 
-# Configurations, to bereplaces as conf file
-maxPingTimeDiff = 241
-timeUntilOutageRePing = 120
+
+# Configurations, now replaced as a conf file!
+config = configparser.ConfigParser()
+config.read('config.ini')
+maxPingTimeDiff = int(config.get("configurations", "maxPingTimeDiff"))
+timeUntilOutageRePing = int(config.get("configurations", "timeUntilOutageRePing"))
+logFile = config.get("configurations", "logFile")
+
+#Strings for logging
+logMessageSent = config.get("logs", "logMessageSent")
+logStart = config.get("logs", "logStart")
+logSystemDown = config.get("logs", "logSystemDown")
+logRadioClubPushedOutage = config.get("logs", "logRadioClubPushedOutage")
+logSystemOnline =  config.get("logs", "logSystemOnline")
+logReconnect = config.get("logs", "logReconnect")
+logLastTransmission = config.get("logs", "logLastTransmission")
+
+#Paths of strings for push notifications
+outageNotifPath = config.get("notifs", "outageNotifPath")
+reconnectNotifPath = config.get("notifs", "reconnectNotifPath")
+
+#web scraping info, to be updated when adding support for other transceivers, etc
 URL = "https://www.wsprnet.org/olddb?mode=html&band=40&limit=1&findcall=w8edu&findreporter=&sort=date"
 lineNumberToKeep = 122
-scrapedFile = "scraped.txt"
-rawHtmlFile = "raw.html"
-logFile = "log.log"
+
+#secret stuff
 token = os.environ["pushoverApiKey"]
 user = os.environ["pushoverUser"]
 
-#import messages as strings
-with open("outageMessage.txt", "r") as f:
+#import messages to users as strings
+with open(outageNotifPath, "r") as f:
 	outageNotif = f.read()
-with open("reconnectMessage.txt", "r") as f:
+with open(reconnectNotifPath, "r") as f:
 	reconnectNotif = f.read()
 
 #set up internal logger
 logging.basicConfig(
 	level=logging.INFO,  # Log messages with level INFO or higher
 	format='%(asctime)s - %(levelname)s - %(message)s',  # Format of log messages
-	handlers=[logging.FileHandler('log.log')]  # Log messages to a file called 'log.log'
+	handlers=[logging.FileHandler(logFile)]  # Log messages to a file called 'log.log'
 )
 
 radioClubAlreadyNotified = False
@@ -42,9 +61,9 @@ def sendMessageToRadio(message):
 			"message": message,
 		}), { "Content-type": "application/x-www-form-urlencoded" })
 	conn.getresponse()
-	logging.info("Pushed to user: {}".format(message))
+	logging.critical(logMessageSent.format(message))
 
-logging.info("STARTING LOUDR")
+logging.critical(logStart)
 
 # Sleep until the 2 minute mark
 time_to_sleep = (120 - int(time.time()) % 120)
@@ -75,12 +94,12 @@ while True:
 	#check if there is an outage
 	if maxPingTimeDiff < secondsSinceLastPing:
 		#log a outage, set time until outage reping
-		logging.critical("Wspr is not wspring.")
+		logging.info(logSystemDown)
 		secondsUntilNextCheck = timeUntilOutageRePing
 
 		#notify radio club if radio club was not notified yet
 		if not radioClubAlreadyNotified:
-			logging.info("Notifying radio club system is offline")
+			logging.info(logRadioClubPushedOutage)
 			messageToPush = outageNotif.format(hoursSinceLastPing, minutesSinceLastPing)
 			sendMessageToRadio(messageToPush)
 			radioClubAlreadyNotified = True
@@ -89,14 +108,14 @@ while True:
 		secondsUntilNextCheck = maxPingTimeDiff + epochTimeLastPing - currentTime + 1
 		hoursUntilNextCheck = secondsUntilNextCheck // 3600
 		minutesUntilNextCheck = (secondsUntilNextCheck // 60) % 60
-		logging.info(f"Wspr is wspring, will test it again in {hoursUntilNextCheck} hours: {minutesUntilNextCheck} minutes.")
+		logging.info(logSystemOnline.format(hoursUntilNextCheck, minutesUntilNextCheck))
 
 		#send message if system is back online after an outage
 		if radioClubAlreadyNotified:
 			messageToPush = reconnectNotif
 			sendMessageToRadio(messageToPush)
 			radioClubAlreadyNotified = False
-			logging.info("Radio club notified system is back online.")
+			logging.info(logReconnect)
 
-	logging.info(f"Last data transmission to the server was {lastPingScraped} UTC. The time since last transmission is {hoursSinceLastPing} hours: {minutesSinceLastPing} minutes.")
+	logging.info(logLastTransmission.format(lastPingScraped, hoursSinceLastPing, minutesSinceLastPing))
 	time.sleep(secondsUntilNextCheck)

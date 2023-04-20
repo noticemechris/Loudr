@@ -4,5 +4,5 @@ python3 Loudr.py &
 
 end (less badly):
 
-ps aux | grep my_script.py
+ps aux | grep Loudr.py
 kill [PID]
