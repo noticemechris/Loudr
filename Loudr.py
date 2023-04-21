@@ -2,12 +2,13 @@ import os
 import re
 import time
 import requests
-from datetime import datetime
+import datetime
 import logging
 import http.client
 import urllib
 import configparser
-
+import schedule
+from datetime import datetime, timedelta
 
 # Configurations, now replaced as a conf file!
 config = configparser.ConfigParser()
@@ -15,6 +16,7 @@ config.read('config.ini')
 maxPingTimeDiff = int(config.get("configurations", "maxPingTimeDiff"))
 timeUntilOutageRePing = int(config.get("configurations", "timeUntilOutageRePing"))
 logFile = config.get("configurations", "logFile")
+twoMinutes = 120
 
 #Strings for logging
 logMessageSent = config.get("logs", "logMessageSent")
@@ -63,39 +65,48 @@ def sendMessageToRadio(message):
 	conn.getresponse()
 	logging.critical(logMessageSent.format(message))
 
-logging.critical(logStart)
+def scrapeLastPing():
+    # Fetch the webpage using requests and save it to a temporary file
+    lastPingScraped = requests.get(URL)
 
-# Sleep until the 2 minute mark
-time_to_sleep = (120 - int(time.time()) % 120)
-time.sleep(time_to_sleep)
+    # Read the raw HTML file and keep only the specified line
+    lastPingScraped = lastPingScraped.text.splitlines()
 
-while True:
-	# Fetch the webpage using requests and save it to a temporary file
-	lastPingScraped = requests.get(URL)
+    #Extract the line to keep
+    lastPingScraped = lastPingScraped[lineNumberToKeep - 1]
 
-	# Read the raw HTML file and keep only the specified line
-	lastPingScraped = lastPingScraped.text.splitlines()
+    #extract the UTC time to keep
+    lastPingScraped = lastPingScraped.split(";", 1)[1].split("&", 1)[0].strip()
 
-	#Extract the line to keep
-	lastPingScraped = lastPingScraped[lineNumberToKeep - 1]
+    # Convert the timestamp to epoch time
+    epochTimeLastPing = int(datetime.strptime(lastPingScraped, "%Y-%m-%d %H:%M").strftime("%s"))
+    currentTime = int(time.time())
 
-	#extract the UTC time to keep
-	lastPingScraped = lastPingScraped.split(";", 1)[1].split("&", 1)[0].strip()
+    #find time since last ping in readable format
+    secondsSinceLastPing = currentTime - epochTimeLastPing
+    return epochTimeLastPing, secondsSinceLastPing, lastPingScraped
 
-	# Convert the timestamp to epoch time
-	epochTimeLastPing = int(datetime.strptime(lastPingScraped, "%Y-%m-%d %H:%M").strftime("%s"))
+def secondsToTimestamp(seconds):
+	hours = seconds // 3600
+	minutes = (seconds // 60) % 60
+	return hours, minutes
+
+def dbCheck():
+	#define global variables
+	global radioClubAlreadyNotified
+
 	currentTime = int(time.time())
 
-	#find time since last ping in readable format
-	secondsSinceLastPing = currentTime - epochTimeLastPing
-	hoursSinceLastPing = secondsSinceLastPing // 3600
-	minutesSinceLastPing = (secondsSinceLastPing // 60) % 60
+	#scrape wsprnet for the time of last ping
+	epochTimeLastPing, secondsSinceLastPing, lastPingScraped = scrapeLastPing()
+
+	#find hours and minutes since last ping
+	hoursSinceLastPing, minutesSinceLastPing = secondsToTimestamp(secondsSinceLastPing)
 
 	#check if there is an outage
 	if maxPingTimeDiff < secondsSinceLastPing:
-		#log a outage, set time until outage reping
+		#log a outage, set time until outage repin
 		logging.info(logSystemDown)
-		secondsUntilNextCheck = timeUntilOutageRePing
 
 		#notify radio club if radio club was not notified yet
 		if not radioClubAlreadyNotified:
@@ -106,9 +117,8 @@ while True:
 	else:
 		#log everything is working if it does work, set time until reping
 		secondsUntilNextCheck = maxPingTimeDiff + epochTimeLastPing - currentTime + 1
-		hoursUntilNextCheck = secondsUntilNextCheck // 3600
-		minutesUntilNextCheck = (secondsUntilNextCheck // 60) % 60
-		logging.info(logSystemOnline.format(hoursUntilNextCheck, minutesUntilNextCheck))
+		hoursUntilNextCheck, minutesUntilNextCheck = secondsToTimestamp(secondsUntilNextCheck)
+		logging.info(logSystemOnline)
 
 		#send message if system is back online after an outage
 		if radioClubAlreadyNotified:
@@ -118,4 +128,28 @@ while True:
 			logging.info(logReconnect)
 
 	logging.info(logLastTransmission.format(lastPingScraped, hoursSinceLastPing, minutesSinceLastPing))
-	time.sleep(secondsUntilNextCheck)
+
+
+# Find the next multiple of two minutes
+#nextMultipleOfTwo = now + timedelta(minutes=((now.minute // 2 + 1) * 2 - now.minute))
+#nextMultipleOfTwo = nextMultipleOfTwo.replace(second=0, microsecond=0)
+#print(nextMultipleOfTwo)
+
+#get datetime of current time
+#dateTimeOfCurrentTime = datetime.fromtimestamp(time.time())
+# Find the next multiple of two minutes (in epoch time)
+#nextMultipleOfTwo = (time.time() // twoMinutes + 1) * twoMinutes
+
+# Convert the next multiple of two minutes (in epoch time) to a datetime object
+#startTime = datetime.fromtimestamp(nextMultipleOfTwo)
+
+# Schedule the job to run every 2 minutes, starting at the next multiple of two minutes
+#schedule.every(0.03333333333333333).hours.at(:00).do(dbCheck)
+
+schedule.every(2).minutes.do(dbCheck)
+logging.critical(logStart)
+#at the top of 2 mins, start checking database and see if something was logged there
+#schedule.every(2).minutes.at().do(dbCheck)
+while True:
+    schedule.run_pending()
+    time.sleep(1)
