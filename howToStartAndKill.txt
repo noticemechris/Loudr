@@ -2,7 +2,7 @@ start:
 
 python3 Loudr.py &
 
-end (less badly):
+end:
 
 ps aux | grep Loudr.py
 kill [PID]

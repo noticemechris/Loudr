@@ -8,7 +8,13 @@ import http.client
 import urllib
 import configparser
 import schedule
+import sched
 from datetime import datetime, timedelta
+from apscheduler.schedulers.blocking import BlockingScheduler
+import warnings
+import pytz
+warnings.filterwarnings("ignore", message="The localize method is no longer necessary")
+
 
 # Configurations, now replaced as a conf file!
 config = configparser.ConfigParser()
@@ -51,8 +57,11 @@ logging.basicConfig(
 	format='%(asctime)s - %(levelname)s - %(message)s',  # Format of log messages
 	handlers=[logging.FileHandler(logFile)]  # Log messages to a file called 'log.log'
 )
+logging.getLogger('apscheduler').setLevel(logging.CRITICAL)
 
 radioClubAlreadyNotified = False
+# Start the scheduler
+#s = sched.scheduler(time.time, time.sleep)
 
 def sendMessageToRadio(message):
 	conn = http.client.HTTPSConnection("api.pushover.net:443")
@@ -128,7 +137,7 @@ def dbCheck():
 			logging.info(logReconnect)
 
 	logging.info(logLastTransmission.format(lastPingScraped, hoursSinceLastPing, minutesSinceLastPing))
-
+#	s.enter(120, 1, dbCheck, (sc,))
 
 # Find the next multiple of two minutes
 #nextMultipleOfTwo = now + timedelta(minutes=((now.minute // 2 + 1) * 2 - now.minute))
@@ -144,12 +153,22 @@ def dbCheck():
 #startTime = datetime.fromtimestamp(nextMultipleOfTwo)
 
 # Schedule the job to run every 2 minutes, starting at the next multiple of two minutes
-#schedule.every(0.03333333333333333).hours.at(:00).do(dbCheck)
+#schedule.every(0.03333333333333333).hours.at(:00).do(dbCheck)y
 
-schedule.every(2).minutes.do(dbCheck)
+#schedule.every(2).minutes.do(dbCheck)
 logging.critical(logStart)
 #at the top of 2 mins, start checking database and see if something was logged there
 #schedule.every(2).minutes.at().do(dbCheck)
-while True:
-    schedule.run_pending()
-    time.sleep(1)
+#while True:
+#    schedule.run_pending()
+#    time.sleep(1)
+
+# Start the scheduler
+#s = sched.scheduler(tme.time, time.sleep)
+
+#s.enter(120, 1, dbCheck, (s,))
+#s.run()
+
+scheduler = BlockingScheduler()
+scheduler.add_job(dbCheck, 'cron', minute='0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,50,52,54,56,58')
+scheduler.start()
