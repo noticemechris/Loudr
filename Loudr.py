@@ -7,12 +7,11 @@ import logging
 import http.client
 import urllib
 import configparser
-import schedule
-import sched
 from datetime import datetime, timedelta
 from apscheduler.schedulers.blocking import BlockingScheduler
 import warnings
 import pytz
+import transceiverProperties
 warnings.filterwarnings("ignore", message="The localize method is no longer necessary")
 
 
@@ -22,7 +21,7 @@ config.read('config.ini')
 maxPingTimeDiff = int(config.get("configurations", "maxPingTimeDiff"))
 timeUntilOutageRePing = int(config.get("configurations", "timeUntilOutageRePing"))
 logFile = config.get("configurations", "logFile")
-twoMinutes = 120
+transceiverBandList = [list(map(int, array.split(','))) for array in config.get("configurations", "transceiverBandList").split(';')]
 
 #Strings for logging
 logMessageSent = config.get("logs", "logMessageSent")
@@ -32,16 +31,13 @@ logRadioClubPushedOutage = config.get("logs", "logRadioClubPushedOutage")
 logSystemOnline =  config.get("logs", "logSystemOnline")
 logReconnect = config.get("logs", "logReconnect")
 logLastTransmission = config.get("logs", "logLastTransmission")
+logCreateTransceivers = config.get("logs", "logCreateTransceivers")
 
 #Paths of strings for push notifications
 outageNotifPath = config.get("notifs", "outageNotifPath")
 reconnectNotifPath = config.get("notifs", "reconnectNotifPath")
 
-#web scraping info, to be updated when adding support for other transceivers, etc
-URL = "https://www.wsprnet.org/olddb?mode=html&band=40&limit=1&findcall=w8edu&findreporter=w8edu&sort=date"
-lineNumberToKeep = 122
-
-#secret stuff
+#secret stuff hidden in ~/.bashrc
 token = os.environ["pushoverApiKey"]
 user = os.environ["pushoverUser"]
 
@@ -59,9 +55,16 @@ logging.basicConfig(
 )
 logging.getLogger('apscheduler').setLevel(logging.CRITICAL)
 
-radioClubAlreadyNotified = False
-# Start the scheduler
-#s = sched.scheduler(time.time, time.sleep)
+#set up a list of Transceivers using the band list
+transceiverList = []
+for transceiver in transceiverBandList:
+	transceiverList.append(transceiverProperties.WsprTransceiver(transceiver))
+
+#log all reated transceivers
+logging.critical(logCreateTransceivers.format(str(transceiverBandList)))
+
+#create scheduler
+scheduler = BlockingScheduler()
 
 def sendMessageToRadio(message):
 	conn = http.client.HTTPSConnection("api.pushover.net:443")
@@ -74,41 +77,18 @@ def sendMessageToRadio(message):
 	conn.getresponse()
 	logging.critical(logMessageSent.format(message))
 
-def scrapeLastPing():
-    # Fetch the webpage using requests and save it to a temporary file
-    lastPingScraped = requests.get(URL)
-
-    # Read the raw HTML file and keep only the specified line
-    lastPingScraped = lastPingScraped.text.splitlines()
-
-    #Extract the line to keep
-    lastPingScraped = lastPingScraped[lineNumberToKeep - 1]
-
-    #extract the UTC time to keep
-    lastPingScraped = lastPingScraped.split(";", 1)[1].split("&", 1)[0].strip()
-
-    # Convert the timestamp to epoch time
-    epochTimeLastPing = int(datetime.strptime(lastPingScraped, "%Y-%m-%d %H:%M").strftime("%s"))
-    currentTime = int(time.time())
-
-    #find time since last ping in readable format
-    secondsSinceLastPing = currentTime - epochTimeLastPing
-    return epochTimeLastPing, secondsSinceLastPing, lastPingScraped
-
 def secondsToTimestamp(seconds):
 	hours = seconds // 3600
 	minutes = (seconds // 60) % 60
 	return hours, minutes
 
-def dbCheck():
-	#define global variables
-	global radioClubAlreadyNotified
-
+def dbCheck(transceiver, checkNextMinute=False):
 	currentTime = int(time.time())
-
+	print("ooga")
 	#scrape wsprnet for the time of last ping
-	epochTimeLastPing, secondsSinceLastPing, lastPingScraped = scrapeLastPing()
-
+	epochTimeLastPing, secondsSinceLastPing, lastPingScraped = transceiver.findLastPing()
+	print("booga")
+	#print(str(epochTimeLastPing) + str(secondsSinceLastPing) + str(lastPingScraped))
 	#find hours and minutes since last ping
 	hoursSinceLastPing, minutesSinceLastPing = secondsToTimestamp(secondsSinceLastPing)
 
@@ -118,11 +98,11 @@ def dbCheck():
 		logging.info(logSystemDown)
 
 		#notify radio club if radio club was not notified yet
-		if not radioClubAlreadyNotified:
+		if not transceiver.getNotificationStatus():
 			logging.info(logRadioClubPushedOutage)
 			messageToPush = outageNotif.format(hoursSinceLastPing, minutesSinceLastPing)
 			sendMessageToRadio(messageToPush)
-			radioClubAlreadyNotified = True
+			transceiver.changeNotificationStatus()
 	else:
 		#log everything is working if it does work, set time until reping
 		secondsUntilNextCheck = maxPingTimeDiff + epochTimeLastPing - currentTime + 1
@@ -130,45 +110,28 @@ def dbCheck():
 		logging.info(logSystemOnline)
 
 		#send message if system is back online after an outage
-		if radioClubAlreadyNotified:
+		if transceiver.getNotificationStatus():
 			messageToPush = reconnectNotif
 			sendMessageToRadio(messageToPush)
-			radioClubAlreadyNotified = False
+			transceiver.changeNotificationStatus()
 			logging.info(logReconnect)
 
-	logging.info(logLastTransmission.format(lastPingScraped, hoursSinceLastPing, minutesSinceLastPing))
-#	s.enter(120, 1, dbCheck, (sc,))
+	logging.info(logLastTransmission.format(transceiver.getBands(), lastPingScraped, hoursSinceLastPing, minutesSinceLastPing))
 
-# Find the next multiple of two minutes
-#nextMultipleOfTwo = now + timedelta(minutes=((now.minute // 2 + 1) * 2 - now.minute))
-#nextMultipleOfTwo = nextMultipleOfTwo.replace(second=0, microsecond=0)
-#print(nextMultipleOfTwo)
+	if checknextMinute:
+		nextMinute = datetime.now() + timedelta(minutes=1)
+		nextMinuteStart = next_minute.replace(second=0, microsecond=0)
+		scheduler.add_job(dbCheck, trigger='date', run_date=nextMinuteStart, args=[transceiver, True])
+	else:
+		return transceiver
 
-#get datetime of current time
-#dateTimeOfCurrentTime = datetime.fromtimestamp(time.time())
-# Find the next multiple of two minutes (in epoch time)
-#nextMultipleOfTwo = (time.time() // twoMinutes + 1) * twoMinutes
-
-# Convert the next multiple of two minutes (in epoch time) to a datetime object
-#startTime = datetime.fromtimestamp(nextMultipleOfTwo)
-
-# Schedule the job to run every 2 minutes, starting at the next multiple of two minutes
-#schedule.every(0.03333333333333333).hours.at(:00).do(dbCheck)y
-
-#schedule.every(2).minutes.do(dbCheck)
-logging.critical(logStart)
-#at the top of 2 mins, start checking database and see if something was logged there
-#schedule.every(2).minutes.at().do(dbCheck)
-#while True:
-#    schedule.run_pending()
-#    time.sleep(1)
-
-# Start the scheduler
-#s = sched.scheduler(tme.time, time.sleep)
-
-#s.enter(120, 1, dbCheck, (s,))
-#s.run()
-
-scheduler = BlockingScheduler()
-scheduler.add_job(dbCheck, 'cron', minute='0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,50,52,54,56,58')
-scheduler.start()
+if __name__ == "__main__":
+	#log a start
+	logging.critical(logStart)
+	#add cron jobs for each transceiver to check in the next minute and start scheduling
+	for transceiver in transceiverList:
+		nextMinute = datetime.now() + timedelta(minutes=1)
+		nextMinuteStart = nextMinute.replace(second=0, microsecond=0)
+		scheduler.add_job(dbCheck, trigger='date', run_date=nextMinuteStart, args=[transceiver, True])
+		print("scheduled")
+	scheduler.start()
