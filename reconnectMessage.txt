@@ -1,2 +1,2 @@
-🥳Horray!🥳 Your WSPR transmitter is successfully transmittng and/or receiving again.
+🥳Horray!🥳 Your WSPR transmitter on band(s): {} is successfully transmittng and/or receiving again.
 No further action items required.
