@@ -12,8 +12,12 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 import warnings
 import pytz
 import transceiverProperties
+import discord.ext
+from discord.ext import tasks, commands
+import asyncio
+import tracemalloc
 warnings.filterwarnings("ignore", message="The localize method is no longer necessary")
-
+tracemalloc.start()
 
 # Configurations, now replaced as a conf file!
 config = configparser.ConfigParser()
@@ -37,8 +41,9 @@ outageNotifPath = config.get("notifs", "outageNotifPath")
 reconnectNotifPath = config.get("notifs", "reconnectNotifPath")
 
 #secret stuff hidden in ~/.bashrc
-token = os.environ["pushoverApiKey"]
-user = os.environ["pushoverUser"]
+pushoverToken = os.environ["pushoverApiKey"]
+pushoverUser = os.environ["pushoverUser"]
+discordToken = os.getenv('loudrBotKey')
 
 #import messages to users as strings
 with open(outageNotifPath, "r") as f:
@@ -46,37 +51,86 @@ with open(outageNotifPath, "r") as f:
 with open(reconnectNotifPath, "r") as f:
 	reconnectNotif = f.read()
 
-#uses pushiver to send a message to radio club, will be replaced with discord
-def sendMessageToRadio(message):
-	conn = http.client.HTTPSConnection("api.pushover.net:443")
-	conn.request("POST", "/1/messages.json",
-		urllib.parse.urlencode({
-			"token": token,
-			"user": user,
-			"message": message,
-		}), { "Content-type": "application/x-www-form-urlencoded" })
-	conn.getresponse()
-	logging.critical(logMessageSent.format(message))
+#set up internal logger
+logging.basicConfig(
+level=logging.INFO,  # Log messages with level INFO or higher
+format='%(asctime)s - %(levelname)s - %(message)s',  # Format of log messages
+handlers=[logging.FileHandler(logFile)]  # Log messages to a file called 'log.log'
+)
+logging.getLogger('apscheduler').setLevel(logging.CRITICAL)
+
+#set up a list of Transceivers using the band list
+transceiverList = []
+for transceiver in transceiverBandList:
+	transceiverList.append(transceiverProperties.WsprTransceiver(transceiver))
+
+#log all reated transceivers
+logging.critical(logCreateTransceivers.format(str(transceiverBandList)))
+
+#create scheduler
+scheduler = BlockingScheduler()
+
+#log a start with internal logger
+logging.critical(logStart)
+
+#discord bot setup stuff
+intents = discord.Intents.default()
+intents.message_content = True
+client = discord.Client(intents=intents)
+discordChannelNum = 1100287191323783268
+
+@client.event
+async def on_ready():
+	logging.critical(f'Discord bot logged in as {client.user}')
+	#send message confirming it is alive:
+	await sendMessageToRadio("Don't be naughty! Loudr is now watching 👀")
+	await dbCheck()
+	now = datetime.now()
+	seconds_until_next_minute = 60 - now.second
+	await asyncio.sleep(seconds_until_next_minute)
+	dbCheck.start()
+
+#uses pushover to send a message to radio club, will be replaced with discord
+async def sendMessageToRadio(message):
+	try:
+		#send to pushover
+		conn = http.client.HTTPSConnection("api.pushover.net:443")
+		conn.request("POST", "/1/messages.json",
+			urllib.parse.urlencode({
+				"token": pushoverToken,
+				"user": pushoverUser,
+				"message": message,
+			}), { "Content-type": "application/x-www-form-urlencoded" })
+		conn.getresponse()
+		#send to bot
+		channel = client.get_channel(discordChannelNum)
+		await channel.send(message)
+		#log
+		logging.critical(logMessageSent.format(message))
+	except Exception as e:
+		logging.error("Exception occurred in sendMessageToRadio:", exc_info=True)
 
 #convers time in seconds to hours and mins
-def secondsToTimestamp(seconds):
+async def secondsToTimestamp(seconds):
 	hours = seconds // 3600
 	minutes = (seconds // 60) % 60
 	return hours, minutes
 
 #take in a bool for if everyone was pinged over the past 6 mins!!!
-def dbCheck(transceiverList, checkNextMinute=False):
+@tasks.loop(seconds=60.0)
+async def dbCheck():
 	try:
 		#create items to return and push to user/logs
 		updatedTransceiverList = []
 		messageToPush = ""
 		messageToLog = ""
 		currentTime = int(time.time())
+		global transceiverList
 		for transceiver in transceiverList:
 			#find hours and minutes since last ping
 			epochTimeLastPing, secondsSinceLastPing, lastPingScraped = transceiver.findLastPing()
-			hoursSinceLastPing, minutesSinceLastPing = secondsToTimestamp(secondsSinceLastPing)
-			#check if there is an outage
+			hoursSinceLastPing, minutesSinceLastPing = await secondsToTimestamp(secondsSinceLastPing)
+			#check if there is an outage. Outage is defined as if the time since last ping is greater than the set threshold
 			if maxPingTimeDiff <= secondsSinceLastPing:
 				#log a outage, set time until outage reping
 				messageToLog += logSystemDown.format(str(transceiver.getBands())) + "\n"
@@ -86,10 +140,11 @@ def dbCheck(transceiverList, checkNextMinute=False):
 					#append string to push
 					messageToPush += outageNotif.format(str(transceiver.getBands()), hoursSinceLastPing, minutesSinceLastPing) + "\n"
 					transceiver.changeNotificationStatus()
+			#in the event there is not an outage, log an notify radio club if radio club throught there was an outage
 			else:
 				#log everything is working if it does work, set time until reping
 				secondsUntilNextCheck = maxPingTimeDiff + epochTimeLastPing - currentTime + 1
-				hoursUntilNextCheck, minutesUntilNextCheck = secondsToTimestamp(secondsUntilNextCheck)
+				hoursUntilNextCheck, minutesUntilNextCheck = await secondsToTimestamp(secondsUntilNextCheck)
 				messageToLog += logSystemOnline.format(str(transceiver.getBands())) +"\n"
 				if transceiver.getNotificationStatus():
 					transceiver.changeNotificationStatus()
@@ -102,43 +157,20 @@ def dbCheck(transceiverList, checkNextMinute=False):
 		logging.info(messageToLog)
 		#push messages to user if string is not blank
 		if messageToPush != "":
-			sendMessageToRadio(messageToPush)
-		#set cron job for next minute if asked
-		if checkNextMinute:
-			nextMinute = datetime.now() + timedelta(minutes=1)
-			nextMinuteStart = nextMinute.replace(second=0, microsecond=0)
-			scheduler.add_job(dbCheck, trigger='date', run_date=nextMinuteStart, args=[updatedTransceiverList, True])
-		return updatedTransceiverList
+			await sendMessageToRadio(messageToPush)
+		#update transceiver list for when function is run again in a min
+		transceiverList = updatedTransceiverList
 
 	except Exception as e:
-		logging.error("Exception occurred:", exc_info=True)
+		logging.error("Exception occurred in dbCheck:", exc_info=True)
 
-if __name__ == "__main__":
-	#set up internal logger
-	logging.basicConfig(
-	level=logging.INFO,  # Log messages with level INFO or higher
-	format='%(asctime)s - %(levelname)s - %(message)s',  # Format of log messages
-	handlers=[logging.FileHandler(logFile)]  # Log messages to a file called 'log.log'
-	)
+#Easter egg i guess
+@client.event
+async def on_message(message):
+        if message.author == client.user:
+                return
 
-	logging.getLogger('apscheduler').setLevel(logging.CRITICAL)
+        if message.content.lower() == 'i am loud':
+                await message.channel.send('I am Loudr')
 
-	#set up a list of Transceivers using the band list
-	transceiverList = []
-	for transceiver in transceiverBandList:
-		transceiverList.append(transceiverProperties.WsprTransceiver(transceiver))
-
-	#log all reated transceivers
-	logging.critical(logCreateTransceivers.format(str(transceiverBandList)))
-
-	#create scheduler
-	scheduler = BlockingScheduler()
-
-	#log a start
-	logging.critical(logStart)
-	#add cron jobs for each transceiver to check in the next minute and start scheduling
-	#nextMinute = datetime.now() + timedelta(minutes=1)
-	#nextMinuteStart = nextMinute.replace(second=0, microsecond=0)
-	#scheduler.add_job(dbCheck, trigger='date', run_date=nextMinuteStart, args=[transceiverList, True])
-	dbCheck(transceiverList, True)
-	scheduler.start()
+client.run(discordToken)
