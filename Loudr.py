@@ -137,7 +137,8 @@ if __name__ == "__main__":
 	#log a start
 	logging.critical(logStart)
 	#add cron jobs for each transceiver to check in the next minute and start scheduling
-	nextMinute = datetime.now() + timedelta(minutes=1)
-	nextMinuteStart = nextMinute.replace(second=0, microsecond=0)
-	scheduler.add_job(dbCheck, trigger='date', run_date=nextMinuteStart, args=[transceiverList, True])
+	#nextMinute = datetime.now() + timedelta(minutes=1)
+	#nextMinuteStart = nextMinute.replace(second=0, microsecond=0)
+	#scheduler.add_job(dbCheck, trigger='date', run_date=nextMinuteStart, args=[transceiverList, True])
+	dbCheck(transceiverList, True)
 	scheduler.start()
