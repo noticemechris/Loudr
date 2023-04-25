@@ -170,7 +170,7 @@ async def on_message(message):
         if message.author == client.user:
                 return
 
-        if message.content.lower() == 'i am loud':
+        if 'i am loud' in message.content.lower():
                 await message.channel.send('I am Loudr')
 
 client.run(discordToken)
