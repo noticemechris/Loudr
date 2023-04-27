@@ -2,17 +2,24 @@ import configparser
 import requests
 from datetime import datetime
 import time
+import pandas as pd
+import matplotlib.pyplot as plt
+
 
 class WsprTransceiver:
 	def __init__(self, bandArray = None):
 		self.bandArray = bandArray
 		self.radioClubAlreadyNotified = False
-	#configs
-	config = configparser.ConfigParser()
-	config.read('config.ini')
-	callSign = config.get("configurations", "callSign")
-	URL =  config.get("configurations", "URL")
-	lineNumberToKeep = 122
+		#configs
+		config = configparser.ConfigParser()
+		config.read('config.ini')
+		self.callSign = config.get("configurations", "callSign")
+		self.URL = config.get("configurations", "URL")
+		self.lineNumberToKeep = 122
+		self.dfXAxis = config.get("configurations", "dfXAxis")
+		self.dfYAxis = config.get("configurations", "dfYAxis")
+		#create dataframe for tracking
+		self.outageData = pd.DataFrame(columns=[self.dfXAxis, self.dfYAxis])
 
 	#functions
 	#finds last ping of band using web scraping
@@ -60,10 +67,16 @@ class WsprTransceiver:
 	#used to determine if radio club should be pinged about an outage or reconnect.
 	def changeNotificationStatus(self):
 		self.radioClubAlreadyNotified = not self.radioClubAlreadyNotified
-
 	#returns notification status.
 	def getNotificationStatus(self):
 		return self.radioClubAlreadyNotified
 	#returns band array for logging/message purposes
 	def getBands(self):
 		return self.bandArray
+	#logs if system was up during a given timestamp using a boolean input
+	def logUptime(self, timeStamp, wsprIsUp):
+		newRow = pd.DataFrame({self.dfXAxis: [timeStamp], self.dfYAxis: [wsprIsUp]})
+		self.outageData = pd.concat([self.outageData, newRow], ignore_index=True)
+	#returns outageData dataframe
+	def getUptimeHistory(self):
+		return self.outageData
