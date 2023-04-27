@@ -2,20 +2,20 @@ import os
 import re
 import time
 import requests
-import datetime
 import logging
 import http.client
 import urllib
 import configparser
 from datetime import datetime, timedelta
-from apscheduler.schedulers.blocking import BlockingScheduler
 import warnings
 import pytz
 import transceiverProperties
-import discord.ext
-from discord.ext import tasks, commands
 import asyncio
 import tracemalloc
+import sys
+import discord
+from discord.ext import commands, tasks
+
 warnings.filterwarnings("ignore", message="The localize method is no longer necessary")
 tracemalloc.start()
 
@@ -25,6 +25,7 @@ config.read('config.ini')
 maxPingTimeDiff = int(config.get("configurations", "maxPingTimeDiff"))
 logFile = config.get("configurations", "logFile")
 transceiverBandList = [list(map(int, array.split(','))) for array in config.get("configurations", "transceiverBandList").split(';')]
+csvName = config.get("configurations", "csvName")
 
 #Strings for logging
 logMessageSent = config.get("logs", "logMessageSent")
@@ -35,10 +36,13 @@ logSystemOnline =  config.get("logs", "logSystemOnline")
 logReconnect = config.get("logs", "logReconnect")
 logLastTransmission = config.get("logs", "logLastTransmission")
 logCreateTransceivers = config.get("logs", "logCreateTransceivers")
+logUserPushedData = config.get("logs", "logUserPushedData")
 
 #Paths of strings for push notifications
 outageNotifPath = config.get("notifs", "outageNotifPath")
 reconnectNotifPath = config.get("notifs", "reconnectNotifPath")
+exportDataNotifPath = config.get("notifs", "exportDataNotifPath")
+pushUserDfPath = config.get("notifs", "pushUserDfPath")
 
 #secret stuff hidden in ~/.bashrc
 pushoverToken = os.environ["pushoverApiKey"]
@@ -50,6 +54,10 @@ with open(outageNotifPath, "r") as f:
 	outageNotif = f.read()
 with open(reconnectNotifPath, "r") as f:
 	reconnectNotif = f.read()
+with open(exportDataNotifPath, "r") as f:
+	exportDataNotif = f.read()
+with open(pushUserDfPath, "r") as f:
+	pushUserDf = f.read()
 
 #set up internal logger
 logging.basicConfig(
@@ -57,7 +65,7 @@ level=logging.INFO,  # Log messages with level INFO or higher
 format='%(asctime)s - %(levelname)s - %(message)s',  # Format of log messages
 handlers=[logging.FileHandler(logFile)]  # Log messages to a file called 'log.log'
 )
-logging.getLogger('apscheduler').setLevel(logging.CRITICAL)
+sys.stdout = sys.stderr = open(logFile, 'a', encoding='utf-8')
 
 #set up a list of Transceivers using the band list
 transceiverList = []
@@ -67,27 +75,24 @@ for transceiver in transceiverBandList:
 #log all reated transceivers
 logging.critical(logCreateTransceivers.format(str(transceiverBandList)))
 
-#create scheduler
-scheduler = BlockingScheduler()
-
 #log a start with internal logger
 logging.critical(logStart)
 
 #discord bot setup stuff
 intents = discord.Intents.default()
 intents.message_content = True
-client = discord.Client(intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents)
 discordChannelNum = 1100287191323783268
 
-@client.event
+@bot.event
 async def on_ready():
-	logging.critical(f'Discord bot logged in as {client.user}')
+	logging.critical(f'Discord bot logged in as {bot.user}')
 	#send message confirming it is alive:
 	await sendMessageToRadio("Don't be naughty! Loudr is now watching 👀")
 	await dbCheck()
 	now = datetime.now()
-	seconds_until_next_minute = 60 - now.second
-	await asyncio.sleep(seconds_until_next_minute)
+	secondsUntilNextMinute = 60 - now.second
+	await asyncio.sleep(secondsUntilNextMinute)
 	dbCheck.start()
 
 #uses pushover to send a message to radio club, will be replaced with discord
@@ -103,7 +108,7 @@ async def sendMessageToRadio(message):
 			}), { "Content-type": "application/x-www-form-urlencoded" })
 		conn.getresponse()
 		#send to bot
-		channel = client.get_channel(discordChannelNum)
+		channel = bot.get_channel(discordChannelNum)
 		await channel.send(message)
 		#log
 		logging.critical(logMessageSent.format(message))
@@ -125,6 +130,7 @@ async def dbCheck():
 		messageToPush = ""
 		messageToLog = ""
 		currentTime = int(time.time())
+		currentDateTime = datetime.now()
 		global transceiverList
 		for transceiver in transceiverList:
 			#find hours and minutes since last ping
@@ -134,6 +140,7 @@ async def dbCheck():
 			if maxPingTimeDiff <= secondsSinceLastPing:
 				#log a outage, set time until outage reping
 				messageToLog += logSystemDown.format(str(transceiver.getBands())) + "\n"
+				transceiver.logUptime(currentDateTime, False)
 				#notify radio club if radio club was not notified yet
 				if not transceiver.getNotificationStatus():
 					messageToLog += logRadioClubPushedOutage.format(str(transceiver.getBands())) + "\n"
@@ -142,10 +149,10 @@ async def dbCheck():
 					transceiver.changeNotificationStatus()
 			#in the event there is not an outage, log an notify radio club if radio club throught there was an outage
 			else:
-				#log everything is working if it does work, set time until reping
-				secondsUntilNextCheck = maxPingTimeDiff + epochTimeLastPing - currentTime + 1
-				hoursUntilNextCheck, minutesUntilNextCheck = await secondsToTimestamp(secondsUntilNextCheck)
+				#log everything is working if it does work
 				messageToLog += logSystemOnline.format(str(transceiver.getBands())) +"\n"
+				#log to dataframe
+				transceiver.logUptime(currentDateTime, True)
 				if transceiver.getNotificationStatus():
 					transceiver.changeNotificationStatus()
 					messageToLog += logReconnect.format(str(transceiver.getBands())) + "\n"
@@ -165,12 +172,28 @@ async def dbCheck():
 		logging.error("Exception occurred in dbCheck:", exc_info=True)
 
 #Easter egg i guess
-@client.event
+@bot.event
 async def on_message(message):
-        if message.author == client.user:
-                return
+	if message.author == bot.user:
+		return
 
-        if 'iamloud' in message.content.lower().replace(" ", ""):
-                await message.channel.send('I am Loudr')
+	if 'iamloud' in message.content.lower().replace(" ", ""):
+		await message.channel.send('I am Loudr')
+	# Process commands
+	await bot.process_commands(message)
 
-client.run(discordToken)
+# Export uptime data
+@bot.command()
+async def exportuptimedata(ctx):
+	await ctx.send(exportDataNotif)
+	for transceiver in transceiverList:
+		fileName = csvName.format(transceiver.getBands())
+		transceiver.getUptimeHistory().to_csv(fileName, index=False)
+		await ctx.send(pushUserDf.format(transceiver.getBands()))
+		with open(fileName, 'rb') as file:
+			await ctx.send(file=discord.File(file, fileName))
+		# Delete the local CSV file
+		os.remove(fileName)
+		logging.info(logUserPushedData)
+
+bot.run(discordToken)
