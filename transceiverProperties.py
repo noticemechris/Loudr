@@ -1,6 +1,7 @@
 import configparser
 import requests
-from datetime import datetime
+import datetime
+from datetime import datetime, timedelta
 import time
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -75,6 +76,8 @@ class WsprTransceiver:
 		return self.bandArray
 	#logs if system was up during a given timestamp using a boolean input
 	def logUptime(self, timeStamp, wsprIsUp):
+		#round to nearest second
+		timeStamp = timeStamp + timedelta(seconds=0) - timedelta(microseconds=timeStamp.microsecond)
 		newRow = pd.DataFrame({self.dfXAxis: [timeStamp], self.dfYAxis: [wsprIsUp]})
 		self.outageData = pd.concat([self.outageData, newRow], ignore_index=True)
 	#returns outageData dataframe
