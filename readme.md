@@ -1,2 +1,3 @@
 Thanks for using Loudr by W7OKE! More docs to come...
 For more information (soon), see my QRZ profile.
+For block diagram, please see blockDiagram.pdf
