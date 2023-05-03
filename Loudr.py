@@ -184,7 +184,7 @@ async def on_message(message):
 
 # Export uptime data
 @bot.command()
-async def exportuptimedata(ctx):
+async def data(ctx):
 	await ctx.send(exportDataNotif)
 	for transceiver in transceiverList:
 		fileName = csvName.format(transceiver.getBands())
