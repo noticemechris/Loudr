@@ -16,7 +16,7 @@ class WsprTransceiver:
 		config.read('config.ini')
 		self.callSign = config.get("configurations", "callSign")
 		self.URL = config.get("configurations", "URL")
-		self.lineNumberToKeep = 122
+		self.lineNumberToKeep = 147
 		self.dfXAxis = config.get("configurations", "dfXAxis")
 		self.dfYAxis = config.get("configurations", "dfYAxis")
 		#create dataframe for tracking
